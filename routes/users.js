@@ -30,7 +30,11 @@ router.post('/signup', async (req, res) => {
 
     if (checkError && checkError.code !== 'PGRST116') {
       console.error('Error checking existing user:', checkError);
-      return res.status(500).json({ error: 'Failed to check existing user' });
+      console.error('Error details:', JSON.stringify(checkError, null, 2));
+      return res.status(500).json({ 
+        error: 'Failed to check existing user',
+        details: process.env.NODE_ENV === 'development' ? checkError.message : undefined
+      });
     }
 
     if (existingUser) {
@@ -74,9 +78,17 @@ router.post('/signup', async (req, res) => {
 
     if (profileError) {
       console.error('Error creating user profile:', profileError);
+      console.error('Profile error details:', JSON.stringify(profileError, null, 2));
       // Clean up auth user if profile creation fails
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
-      return res.status(500).json({ error: 'Failed to create user profile' });
+      try {
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup auth user:', cleanupError);
+      }
+      return res.status(500).json({ 
+        error: 'Failed to create user profile',
+        details: process.env.NODE_ENV === 'development' ? profileError.message : undefined
+      });
     }
 
     res.status(201).json({ 
