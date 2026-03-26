@@ -54,3 +54,12 @@ app.use((req, res) => {
 
 // For Vercel serverless deployment
 module.exports = app;
+
+// For local development
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`🚀 Memory AI Backend server running on port ${PORT}`);
+    console.log(`📊 Health check available at http://localhost:${PORT}/health`);
+  });
+}
