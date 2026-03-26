@@ -9,7 +9,6 @@ const memoryRoutes = require('./routes/memories');
 const userRoutes = require('./routes/users');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(helmet());
@@ -53,7 +52,5 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Memory AI Backend server running on port ${PORT}`);
-  console.log(`📊 Health check available at http://localhost:${PORT}/health`);
-});
+// For Vercel serverless deployment
+module.exports = app;

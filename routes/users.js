@@ -14,6 +14,13 @@ router.post('/signup', async (req, res) => {
       });
     }
 
+    // Check if Supabase is available
+    if (!supabase || !supabaseAdmin) {
+      return res.status(500).json({ 
+        error: 'Database connection not available. Please check server configuration.' 
+      });
+    }
+
     // Check if user already exists
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
@@ -95,6 +102,13 @@ router.post('/login', async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ 
         error: 'Email and password are required' 
+      });
+    }
+
+    // Check if Supabase is available
+    if (!supabase || !supabaseAdmin) {
+      return res.status(500).json({ 
+        error: 'Database connection not available. Please check server configuration.' 
       });
     }
 
