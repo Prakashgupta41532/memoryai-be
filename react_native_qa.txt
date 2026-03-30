@@ -1,0 +1,44 @@
+Q1. What is React Native?
+Answer: React Native is a framework to build mobile apps using JavaScript.
+
+Q2. What is Expo?
+Answer: Expo is a toolchain for building React Native apps faster.
+
+Q3. Why use React Native?
+Answer: It allows cross-platform development using a single codebase.
+
+Q4. What is a component?
+Answer: A component is a reusable piece of UI in React Native.
+
+Q5. What is state?
+Answer: State is a built-in object that stores dynamic data in a component.
+
+Q6. What are props?
+Answer: Props are inputs passed to components to render dynamic data.
+
+Q7. What is JSX?
+Answer: JSX is a syntax extension that allows writing UI in JavaScript.
+
+Q8. What is Flexbox?
+Answer: Flexbox is a layout system used to design responsive layouts.
+
+Q9. What is useEffect?
+Answer: useEffect is a hook used to handle side effects in components.
+
+Q10. What is useState?
+Answer: useState is a hook used to manage state in functional components.
+
+Q11. How to style in React Native?
+Answer: You can style using StyleSheet or styled-components.
+
+Q12. What is navigation?
+Answer: Navigation allows moving between screens in an app.
+
+Q13. What is async/await?
+Answer: It is used to handle asynchronous operations in JavaScript.
+
+Q14. What is API?
+Answer: API allows communication between different software systems.
+
+Q15. What is debugging?
+Answer: Debugging is process of finding and fixing errors in code.

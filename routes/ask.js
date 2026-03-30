@@ -29,7 +29,7 @@ async function generateQueryEmbedding(query) {
     }
     
     console.log(`Using ${EMBEDDING_PROVIDER} for embeddings generation`);
-    const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].url}`, {
+    const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].embeddingsUrl}`, {
       model: LLM_CONFIG[EMBEDDING_PROVIDER].model,
       input: query
     }, {
@@ -163,24 +163,19 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
   }
 }
 
-// Cloud LLM configuration (replace Ollama for production)
+// Cloud LLM configuration (Groq only)
 const LLM_CONFIG = {
-  // OpenAI for embeddings (Groq doesn't support embeddings)
-  openai: {
-    apiKey: process.env.OPENAI_API_KEY,
-    model: 'text-embedding-3-small',
-    url: 'https://api.openai.com/v1/embeddings'
-  },
-  // Groq for chat completion
+  // Groq for both embeddings and chat
   groq: {
     apiKey: process.env.GROQ_API_KEY,
     model: 'llama3-8b-8192',
-    url: 'https://api.groq.com/openai/v1/chat/completions'
+    embeddingsUrl: 'https://api.groq.com/openai/v1/embeddings',
+    chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
   }
 };
 
-// Use OpenAI for embeddings, Groq for chat
-const EMBEDDING_PROVIDER = 'openai';
+// Use Groq for everything
+const EMBEDDING_PROVIDER = 'groq';
 const LLM_PROVIDER = 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
@@ -211,7 +206,7 @@ Context: "React Native is a framework" + Question: "What is Python?" → "I don'
 
 ANSWER:`;
 
-    const response = await axios.post(`${LLM_CONFIG[LLM_PROVIDER].url}`, {
+    const response = await axios.post(`${LLM_CONFIG[LLM_PROVIDER].chatUrl}`, {
       model: LLM_CONFIG[LLM_PROVIDER].model,
       messages: [
         {
@@ -251,7 +246,7 @@ ANSWER:`;
     if (error.response && error.response.status === 401) {
       console.error(`${EMBEDDING_PROVIDER} API key invalid or missing`);
       console.error('Error details:', error.response.data);
-      return "AI service is currently unavailable due to missing API key. Please add OPENAI_API_KEY to environment variables.";
+      return "AI service is currently unavailable due to missing GROQ_API_KEY. Please add GROQ_API_KEY to environment variables.";
     }
     
     // Check for other API errors
