@@ -20,8 +20,11 @@ async function generateQueryEmbedding(query) {
   }
 
   try {
+    // Get config at runtime
+    const llmConfig = getLLMConfig();
+    
     // Check if API key is available
-    if (!LLM_CONFIG[EMBEDDING_PROVIDER].apiKey) {
+    if (!llmConfig[EMBEDDING_PROVIDER].apiKey) {
       console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
       console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('GROQ')));
       console.error('All env vars:', {
@@ -33,12 +36,12 @@ async function generateQueryEmbedding(query) {
     }
     
     console.log(`Using ${EMBEDDING_PROVIDER} for embeddings generation`);
-    const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].embeddingsUrl}`, {
-      model: LLM_CONFIG[EMBEDDING_PROVIDER].model,
+    const response = await axios.post(`${llmConfig[EMBEDDING_PROVIDER].embeddingsUrl}`, {
+      model: llmConfig[EMBEDDING_PROVIDER].model,
       input: query
     }, {
       headers: {
-        'Authorization': `Bearer ${LLM_CONFIG[EMBEDDING_PROVIDER].apiKey}`,
+        'Authorization': `Bearer ${llmConfig[EMBEDDING_PROVIDER].apiKey}`,
         'Content-Type': 'application/json'
       },
       timeout: 15000
@@ -168,7 +171,7 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
 }
 
 // Cloud LLM configuration (Groq only)
-const LLM_CONFIG = {
+const getLLMConfig = () => ({
   // Groq for both embeddings and chat
   groq: {
     apiKey: process.env.GROQ_API_KEY,
@@ -176,13 +179,16 @@ const LLM_CONFIG = {
     embeddingsUrl: 'https://api.groq.com/openai/v1/embeddings',
     chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
   }
-};
+});
 
 // Use Groq for everything
 const EMBEDDING_PROVIDER = 'groq';
 const LLM_PROVIDER = 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
+    // Get config at runtime
+    const llmConfig = getLLMConfig();
+    
     // Create context from relevant chunks (shortened for speed)
     const context = relevantChunks
       .slice(0, 3) // Only use top 3 chunks for speed
@@ -210,8 +216,8 @@ Context: "React Native is a framework" + Question: "What is Python?" → "I don'
 
 ANSWER:`;
 
-    const response = await axios.post(`${LLM_CONFIG[LLM_PROVIDER].chatUrl}`, {
-      model: LLM_CONFIG[LLM_PROVIDER].model,
+    const response = await axios.post(`${llmConfig[LLM_PROVIDER].chatUrl}`, {
+      model: llmConfig[LLM_PROVIDER].model,
       messages: [
         {
           role: 'system',
@@ -226,7 +232,7 @@ ANSWER:`;
       temperature: 0.05
     }, {
       headers: {
-        'Authorization': `Bearer ${LLM_CONFIG[LLM_PROVIDER].apiKey}`,
+        'Authorization': `Bearer ${llmConfig[LLM_PROVIDER].apiKey}`,
         'Content-Type': 'application/json'
       },
       timeout: 30000
