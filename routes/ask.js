@@ -20,6 +20,13 @@ async function generateQueryEmbedding(query) {
   }
 
   try {
+    // Check if API key is available
+    if (!LLM_CONFIG[EMBEDDING_PROVIDER].apiKey) {
+      console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
+      // Return mock embedding to prevent crashes
+      return new Array(1536).fill(0).map(() => Math.random());
+    }
+    
     const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].url}`, {
       model: LLM_CONFIG[EMBEDDING_PROVIDER].model,
       input: query
@@ -232,11 +239,18 @@ ANSWER:`;
     if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
       console.log('Ollama not available - providing fallback response');
       if (relevantChunks.length > 0) {
-        return "I found relevant information in your documents, but the AI service is currently unavailable. Please try again later.";
+        return "I found relevant information in your documents, but AI service is currently unavailable. Please try again later.";
       } else {
         return "I don't have information about this topic in uploaded documents.";
       }
     }
+    
+    // Check if API key is missing
+    if (error.response && error.response.status === 401) {
+      console.error(`${LLM_PROVIDER} API key invalid or missing`);
+      return "AI service is currently unavailable due to configuration issues. Please try again later.";
+    }
+    
     throw new Error('Failed to generate answer');
   }
 }
