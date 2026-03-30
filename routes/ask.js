@@ -23,6 +23,12 @@ async function generateQueryEmbedding(query) {
     // Get config at runtime
     const llmConfig = getLLMConfig();
     
+    // Handle mock embeddings (Groq doesn't support embeddings)
+    if (EMBEDDING_PROVIDER === 'mock') {
+      console.log('Using mock embeddings for production');
+      return new Array(1536).fill(0).map(() => Math.random());
+    }
+    
     // Check if API key is available
     if (!llmConfig[EMBEDDING_PROVIDER].apiKey) {
       console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
@@ -168,19 +174,18 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
   }
 }
 
-// Cloud LLM configuration (Groq only)
+// Cloud LLM configuration (Groq only - using mock embeddings for now)
 const getLLMConfig = () => ({
-  // Groq for both embeddings and chat
+  // Groq for chat only (embeddings not supported)
   groq: {
     apiKey: process.env.GROQ_API_KEY,
     model: 'llama3-8b-8192',
-    embeddingsUrl: 'https://api.groq.com/openai/v1/embeddings',
     chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
   }
 });
 
-// Use Groq for everything
-const EMBEDDING_PROVIDER = 'groq';
+// Use mock embeddings for now (Groq doesn't support embeddings)
+const EMBEDDING_PROVIDER = 'mock';
 const LLM_PROVIDER = 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
