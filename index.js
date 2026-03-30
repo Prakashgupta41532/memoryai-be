@@ -7,6 +7,9 @@ require('dotenv').config();
 // Import routes
 const memoryRoutes = require('./routes/memories');
 const userRoutes = require('./routes/users');
+const uploadRoutes = require('./routes/uploads');
+const askRoutes = require('./routes/ask');
+const managementRoutes = require('./routes/management');
 
 const app = express();
 
@@ -37,6 +40,9 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/memories', memoryRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/ask', askRoutes);
+app.use('/api/management', managementRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
