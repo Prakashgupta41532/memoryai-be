@@ -23,10 +23,12 @@ async function generateQueryEmbedding(query) {
     // Check if API key is available
     if (!LLM_CONFIG[EMBEDDING_PROVIDER].apiKey) {
       console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
+      console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('API')));
       // Return mock embedding to prevent crashes
       return new Array(1536).fill(0).map(() => Math.random());
     }
     
+    console.log(`Using ${EMBEDDING_PROVIDER} for embeddings generation`);
     const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].url}`, {
       model: LLM_CONFIG[EMBEDDING_PROVIDER].model,
       input: query
@@ -247,8 +249,15 @@ ANSWER:`;
     
     // Check if API key is missing
     if (error.response && error.response.status === 401) {
-      console.error(`${LLM_PROVIDER} API key invalid or missing`);
-      return "AI service is currently unavailable due to configuration issues. Please try again later.";
+      console.error(`${EMBEDDING_PROVIDER} API key invalid or missing`);
+      console.error('Error details:', error.response.data);
+      return "AI service is currently unavailable due to missing API key. Please add OPENAI_API_KEY to environment variables.";
+    }
+    
+    // Check for other API errors
+    if (error.response && error.response.status >= 400) {
+      console.error(`${EMBEDDING_PROVIDER} API error:`, error.response.data);
+      return "AI service is currently unavailable. Please try again later.";
     }
     
     throw new Error('Failed to generate answer');
