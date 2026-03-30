@@ -20,11 +20,15 @@ async function generateQueryEmbedding(query) {
   }
 
   try {
-    const response = await axios.post('http://localhost:11434/api/embeddings', {
-      model: 'llama2',
-      prompt: query
+    const response = await axios.post(`${LLM_CONFIG[EMBEDDING_PROVIDER].url}`, {
+      model: LLM_CONFIG[EMBEDDING_PROVIDER].model,
+      input: query
     }, {
-      timeout: 15000 // 15 second timeout
+      headers: {
+        'Authorization': `Bearer ${LLM_CONFIG[EMBEDDING_PROVIDER].apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 15000
     });
     
     // Cache the result
@@ -152,22 +156,22 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
 
 // Cloud LLM configuration (replace Ollama for production)
 const LLM_CONFIG = {
-  // Option 1: Groq (free tier, fast)
+  // OpenAI for embeddings (Groq doesn't support embeddings)
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
+    model: 'text-embedding-3-small',
+    url: 'https://api.openai.com/v1/embeddings'
+  },
+  // Groq for chat completion
   groq: {
     apiKey: process.env.GROQ_API_KEY,
     model: 'llama3-8b-8192',
     url: 'https://api.groq.com/openai/v1/chat/completions'
-  },
-  
-  // Option 2: OpenAI (pay-as-you-go with free credits)
-  openai: {
-    apiKey: process.env.OPENAI_API_KEY,
-    model: 'gpt-3.5-turbo',
-    url: 'https://api.openai.com/v1/chat/completions'
   }
 };
 
-// Use Groq for free tier (you need to add GROQ_API_KEY to .env)
+// Use OpenAI for embeddings, Groq for chat
+const EMBEDDING_PROVIDER = 'openai';
 const LLM_PROVIDER = 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
