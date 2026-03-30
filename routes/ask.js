@@ -23,18 +23,34 @@ async function generateQueryEmbedding(query) {
     // Get config at runtime
     const llmConfig = getLLMConfig();
     
-    // Handle mock embeddings (Groq doesn't support embeddings)
+    // Handle mock embeddings for production
     if (EMBEDDING_PROVIDER === 'mock') {
       console.log('Using mock embeddings for production');
       return new Array(1536).fill(0).map(() => Math.random());
     }
     
-    // Check if API key is available
+    // Handle Ollama for development
+    if (EMBEDDING_PROVIDER === 'ollama') {
+      console.log('Using Ollama for embeddings generation');
+      const response = await axios.post(`${llmConfig[EMBEDDING_PROVIDER].embeddingsUrl}`, {
+        model: llmConfig[EMBEDDING_PROVIDER].model,
+        prompt: query
+      }, {
+        timeout: 15000
+      });
+      
+      // Cache the result
+      queryCache.set(cacheKey, {
+        embedding: response.data.embedding,
+        timestamp: Date.now()
+      });
+      
+      return response.data.embedding;
+    }
+    
+    // Check if API key is available (for production providers)
     if (!llmConfig[EMBEDDING_PROVIDER].apiKey) {
       console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
-      console.error('All environment variables:', Object.keys(process.env));
-      console.error('GROQ_API_KEY value:', process.env.GROQ_API_KEY);
-      console.error('All env vars with GROQ:', Object.keys(process.env).filter(k => k.includes('GROQ')));
       // Return mock embedding to prevent crashes
       return new Array(1536).fill(0).map(() => Math.random());
     }
@@ -174,19 +190,33 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
   }
 }
 
-// Cloud LLM configuration (Groq only - using mock embeddings for now)
-const getLLMConfig = () => ({
-  // Groq for chat only (embeddings not supported)
-  groq: {
-    apiKey: process.env.GROQ_API_KEY,
-    model: 'llama3-8b-8192',
-    chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
+// Cloud LLM configuration (Ollama for local, Groq for production)
+const getLLMConfig = () => {
+  // Use Ollama for local development
+  if (process.env.NODE_ENV === 'development') {
+    return {
+      ollama: {
+        apiKey: null, // Ollama doesn't use API key
+        model: 'llama2',
+        embeddingsUrl: 'http://localhost:11434/api/embeddings',
+        chatUrl: 'http://localhost:11434/api/generate'
+      }
+    };
   }
-});
+  
+  // Use Groq for production (mock embeddings)
+  return {
+    groq: {
+      apiKey: process.env.GROQ_API_KEY,
+      model: 'llama3-8b-8192',
+      chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
+    }
+  };
+};
 
-// Use mock embeddings for now (Groq doesn't support embeddings)
-const EMBEDDING_PROVIDER = 'mock';
-const LLM_PROVIDER = 'groq';
+// Use Ollama for local, mock for production
+const EMBEDDING_PROVIDER = process.env.NODE_ENV === 'development' ? 'ollama' : 'mock';
+const LLM_PROVIDER = process.env.NODE_ENV === 'development' ? 'ollama' : 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
     // Get config at runtime
@@ -231,18 +261,29 @@ ANSWER:`;
           content: prompt
         }
       ],
-      max_tokens: 80,
-      temperature: 0.05
+      ...(LLM_PROVIDER === 'ollama' ? {
+        stream: false,
+        options: {
+          num_predict: 80,
+          temperature: 0.05
+        }
+      } : {
+        max_tokens: 80,
+        temperature: 0.05
+      })
     }, {
-      headers: {
+      headers: LLM_PROVIDER === 'ollama' ? {
+        'Content-Type': 'application/json'
+      } : {
         'Authorization': `Bearer ${llmConfig[LLM_PROVIDER].apiKey}`,
         'Content-Type': 'application/json'
       },
       timeout: 30000
     });
 
-    console.log('LLM Raw Response:', response.data.choices[0].message.content);
-    return response.data.choices[0].message.content.trim();
+    const answer = LLM_PROVIDER === 'ollama' ? response.data.response : response.data.choices[0].message.content;
+    console.log('LLM Raw Response:', answer);
+    return answer.trim();
 
   } catch (error) {
     console.error('Error generating answer:', error);
