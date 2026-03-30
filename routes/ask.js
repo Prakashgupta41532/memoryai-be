@@ -26,11 +26,9 @@ async function generateQueryEmbedding(query) {
     // Check if API key is available
     if (!llmConfig[EMBEDDING_PROVIDER].apiKey) {
       console.error(`${EMBEDDING_PROVIDER} API key not found in environment`);
-      console.error('Available env vars:', Object.keys(process.env).filter(k => k.includes('GROQ')));
-      console.error('All env vars:', {
-        GROQ_API_KEY: process.env.GROQ_API_KEY ? 'SET' : 'NOT SET',
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'SET' : 'NOT SET'
-      });
+      console.error('All environment variables:', Object.keys(process.env));
+      console.error('GROQ_API_KEY value:', process.env.GROQ_API_KEY);
+      console.error('All env vars with GROQ:', Object.keys(process.env).filter(k => k.includes('GROQ')));
       // Return mock embedding to prevent crashes
       return new Array(1536).fill(0).map(() => Math.random());
     }
