@@ -123,8 +123,8 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
       
       console.log(`Chunk ${chunk.id} similarity: ${similarity}`);
       
-      // Accept chunks to test LLM prompt (similarity issue separate)
-      if (similarity > -0.5) { // Accept reasonable range to test LLM
+      // Only accept chunks with high similarity to prevent false matches
+      if (similarity > 0.3) { // Higher threshold for relevance
         chunksWithScores.push({
           ...chunk,
           similarity_score: similarity
@@ -132,7 +132,7 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
       }
     }
 
-    console.log(`Found ${chunksWithScores.length} chunks with similarity > 0.2`);
+    console.log(`Found ${chunksWithScores.length} chunks with similarity > 0.3`);
 
     // Sort by similarity and return top K
     const topChunks = chunksWithScores
@@ -150,7 +150,25 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
   }
 }
 
-// Generate answer using LLM with context (optimized)
+// Cloud LLM configuration (replace Ollama for production)
+const LLM_CONFIG = {
+  // Option 1: Groq (free tier, fast)
+  groq: {
+    apiKey: process.env.GROQ_API_KEY,
+    model: 'llama3-8b-8192',
+    url: 'https://api.groq.com/openai/v1/chat/completions'
+  },
+  
+  // Option 2: OpenAI (pay-as-you-go with free credits)
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
+    model: 'gpt-3.5-turbo',
+    url: 'https://api.openai.com/v1/chat/completions'
+  }
+};
+
+// Use Groq for free tier (you need to add GROQ_API_KEY to .env)
+const LLM_PROVIDER = 'groq';
 async function generateAnswer(query, relevantChunks) {
   try {
     // Create context from relevant chunks (shortened for speed)
@@ -159,40 +177,62 @@ async function generateAnswer(query, relevantChunks) {
       .map((chunk, index) => `[Document ${chunk.document_id}]: ${chunk.content.substring(0, 400)}`)
       .join('\n\n');
 
-    const prompt = `CRITICAL: You can ONLY use the exact text provided in the context. NO exceptions.
+    const prompt = `You are a document-only Q&A assistant. You MUST follow these rules strictly.
 
-CONTEXT DOCUMENT:
+CONTEXT FROM UPLOADED DOCUMENTS:
 ${context}
 
 QUESTION: "${query}"
 
-RULES - FOLLOW EXACTLY:
-1. If the question is NOT answered in the context, respond ONLY: "I don't have information about this topic in uploaded documents."
-2. If the question is about a different topic (Taj Mahal when context is React Native), respond ONLY: "I don't have information about this topic in uploaded documents."
-3. DO NOT use any general knowledge or outside information
-4. DO NOT make up any answers
-5. If you cannot find the EXACT answer in context, say you don't have information
+CRITICAL RULES - NO EXCEPTIONS:
+1. ONLY answer if the exact answer is in the context above
+2. If answer is not in context, respond: "I don't have information about this topic in uploaded documents."
+3. DO NOT use any general knowledge, training data, or outside information
+4. If context mentions React Native and question asks about Python, respond: "I don't have information about this topic in uploaded documents."
+5. If you cannot find the EXACT answer, say you don't have information
 6. Be extremely strict - if unsure, respond that you don't have information
+
+EXAMPLES:
+Context: "React Native is a framework" + Question: "What is React Native?" → "React Native is a framework"
+Context: "React Native is a framework" + Question: "What is Python?" → "I don't have information about this topic in uploaded documents."
 
 ANSWER:`;
 
-    const response = await axios.post('http://localhost:11434/api/generate', {
-      model: 'llama2',
-      prompt: prompt,
-      stream: false,
-      options: {
-        num_predict: 80, // Even shorter response
-        temperature: 0.05  // Even lower temperature
-      }
+    const response = await axios.post(`${LLM_CONFIG[LLM_PROVIDER].url}`, {
+      model: LLM_CONFIG[LLM_PROVIDER].model,
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a document-only Q&A assistant. You can ONLY use information from the provided context. Never use general knowledge or training data.'
+        },
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      max_tokens: 80,
+      temperature: 0.05
     }, {
-      timeout: 30000 // 30 second timeout
+      headers: {
+        'Authorization': `Bearer ${LLM_CONFIG[LLM_PROVIDER].apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
     });
 
-    console.log('LLM Raw Response:', response.data.response);
-    return response.data.response.trim();
+    console.log('LLM Raw Response:', response.data.choices[0].message.content);
+    return response.data.choices[0].message.content.trim();
 
   } catch (error) {
     console.error('Error generating answer:', error);
+    if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
+      console.log('Ollama not available - providing fallback response');
+      if (relevantChunks.length > 0) {
+        return "I found relevant information in your documents, but the AI service is currently unavailable. Please try again later.";
+      } else {
+        return "I don't have information about this topic in uploaded documents.";
+      }
+    }
     throw new Error('Failed to generate answer');
   }
 }
@@ -203,62 +243,50 @@ router.post('/ask', async (req, res) => {
     const { question, user_id } = req.body;
 
     if (!question || !user_id) {
-      return res.status(400).json({
-        error: 'Question and user_id are required'
-      });
-    }
-
-    if (!supabase) {
-      return res.status(500).json({
-        error: 'Database connection not available. Please check server configuration.'
-      });
+      return res.status(400).json({ error: 'Question and user_id are required' });
     }
 
     console.log(`Processing question for user ${user_id}: "${question}"`);
 
-    // Step 1: Convert question to embedding
+    // Step 1: Generate query embedding
     console.log('Step 1: Generating query embedding...');
     const queryEmbedding = await generateQueryEmbedding(question);
     console.log(`Generated embedding with ${queryEmbedding.length} dimensions`);
 
-    // Step 2: Search vector DB for relevant chunks
+    // Step 2: Search for relevant chunks
     console.log('Step 2: Searching for relevant chunks...');
-    const relevantChunks = await searchRelevantChunks(queryEmbedding, user_id, 5);
+    const relevantChunks = await searchRelevantChunks(queryEmbedding, user_id);
     console.log(`Found ${relevantChunks.length} relevant chunks`);
 
+    // HARD RULE: If no chunks found with good similarity, return "not found" immediately
     if (relevantChunks.length === 0) {
+      console.log('No relevant chunks found - returning not found response');
       return res.json({
-        answer: "I don't have any uploaded documents to search through. Please upload some documents first.",
+        answer: "I don't have information about this topic in uploaded documents.",
         sources: [],
-        question: question
+        question
       });
     }
 
-    // Step 3: Send to LLM with context
+    // Step 3: Generate answer
     console.log('Step 3: Generating answer with context...');
     const answer = await generateAnswer(question, relevantChunks);
 
-    // Step 4: Return answer with sources
-    const sources = relevantChunks.map(chunk => ({
-      document_id: chunk.document_id,
-      chunk_index: chunk.chunk_index,
-      similarity_score: chunk.similarity_score,
-      preview: chunk.content.substring(0, 100) + '...'
-    }));
-
     res.json({
-      answer: answer,
-      sources: sources,
-      question: question,
+      answer,
+      sources: relevantChunks.map(chunk => ({
+        document_id: chunk.document_id,
+        chunk_index: chunk.chunk_index,
+        similarity_score: chunk.similarity_score,
+        preview: chunk.content.substring(0, 100) + '...'
+      })),
+      question,
       chunks_used: relevantChunks.length
     });
 
   } catch (error) {
-    console.error('Error in Q&A endpoint:', error);
-    res.status(500).json({
-      error: 'Failed to process question',
-      details: error.message
-    });
+    console.error('Error in ask endpoint:', error);
+    res.status(500).json({ error: 'Failed to process question' });
   }
 });
 
