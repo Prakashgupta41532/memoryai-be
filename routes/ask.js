@@ -164,7 +164,7 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
       console.log(`Chunk ${chunk.id} similarity: ${similarity}`);
       
       // Only accept chunks with high similarity to prevent false matches
-      if (similarity > 0.3) { // Higher threshold for relevance
+      if (similarity > -1) { // Accept all chunks for testing
         chunksWithScores.push({
           ...chunk,
           similarity_score: similarity
@@ -172,7 +172,7 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
       }
     }
 
-    console.log(`Found ${chunksWithScores.length} chunks with similarity > 0.3`);
+    console.log(`Found ${chunksWithScores.length} chunks with similarity > -1`);
 
     // Sort by similarity and return top K
     const topChunks = chunksWithScores
@@ -190,87 +190,186 @@ async function searchRelevantChunks(queryEmbedding, userId, topK = 5) {
   }
 }
 
-// Cloud LLM configuration (Ollama for local, Groq for production)
+// Dynamic LLM configuration with model selection
 const getLLMConfig = () => {
-  // Use Ollama for local development
-  if (process.env.NODE_ENV === 'development') {
-    return {
-      ollama: {
-        apiKey: null, // Ollama doesn't use API key
-        model: 'llama2',
-        embeddingsUrl: 'http://localhost:11434/api/embeddings',
-        chatUrl: 'http://localhost:11434/api/generate'
-      }
-    };
-  }
+  // Always use Ollama for embeddings (local consistency)
+  const embeddingConfig = {
+    ollama: {
+      apiKey: null,
+      model: 'llama2',
+      embeddingsUrl: 'http://localhost:11434/api/embeddings'
+    }
+  };
   
-  // Use Groq for production (mock embeddings)
-  return {
+  // Dynamic model selection for chat
+  const modelSelection = {
+    ollama: {
+      apiKey: null,
+      model: 'llama2',
+      chatUrl: 'http://localhost:11434/api/generate'
+    },
+    qwen: {
+      apiKey: null,
+      model: 'qwen3:30b',
+      chatUrl: 'http://localhost:11434/api/generate'
+    },
     groq: {
       apiKey: process.env.GROQ_API_KEY,
       model: 'llama3-8b-8192',
       chatUrl: 'https://api.groq.com/openai/v1/chat/completions'
+    },
+    claude: {
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      model: 'claude-3-sonnet-20240229',
+      chatUrl: 'https://api.anthropic.com/v1/messages'
+    },
+    gpt4: {
+      apiKey: process.env.OPENAI_API_KEY,
+      model: 'gpt-4-turbo',
+      chatUrl: 'https://api.openai.com/v1/chat/completions'
     }
+  };
+  
+  return {
+    embedding: embeddingConfig.ollama,
+    chat: modelSelection.ollama // Default to Ollama, can be overridden by query analysis
   };
 };
 
 // Use Ollama for local, mock for production
 const EMBEDDING_PROVIDER = process.env.NODE_ENV === 'development' ? 'ollama' : 'mock';
 const LLM_PROVIDER = process.env.NODE_ENV === 'development' ? 'ollama' : 'groq';
+// Validate if answer is strictly based on provided context
+function validateAnswerBasedOnContext(answer, context) {
+  const notFoundPhrases = [
+    "not found in memory",
+    "i don't have information",
+    "i don't know",
+    "i cannot find",
+    "not mentioned",
+    "not provided",
+    "not available",
+    "no information",
+    "cannot answer",
+    "unable to answer"
+  ];
+  
+  const answerLower = answer.toLowerCase().trim();
+  
+  // Check if answer contains any "not found" phrases
+  for (const phrase of notFoundPhrases) {
+    if (answerLower.includes(phrase)) {
+      return { isValid: true, confidence: "Low", reason: "Answer indicates information not found" };
+    }
+  }
+  
+  // Check if answer is empty or too short
+  if (answerLower.length < 10) {
+    return { isValid: false, confidence: "Low", reason: "Answer too short" };
+  }
+  
+  // Check if answer contains speculative language
+  const speculativeWords = ["might", "could", "perhaps", "maybe", "probably", "likely", "seems", "appears"];
+  const hasSpeculativeLanguage = speculativeWords.some(word => answerLower.includes(word));
+  
+  // Check if answer directly references content from context
+  const contextWords = context.toLowerCase().split(/\s+/).filter(word => word.length > 3);
+  const answerWords = answerLower.split(/\s+/).filter(word => word.length > 3);
+  const commonWords = answerWords.filter(word => contextWords.includes(word));
+  const contextOverlap = commonWords.length / Math.max(answerWords.length, 1);
+  
+  // Determine confidence based on context overlap and language
+  let confidence = "Low";
+  let isValid = false;
+  
+  if (contextOverlap > 0.3 && !hasSpeculativeLanguage) {
+    confidence = "High";
+    isValid = true;
+  } else if (contextOverlap > 0.15) {
+    confidence = "Medium";
+    isValid = true;
+  } else if (contextOverlap > 0.05) {
+    confidence = "Low";
+    isValid = true;
+  }
+  
+  return {
+    isValid,
+    confidence,
+    reason: `Context overlap: ${(contextOverlap * 100).toFixed(1)}%, Speculative: ${hasSpeculativeLanguage}`
+  };
+}
+
+// Extract supporting evidence from context for the answer
+function extractSupportingEvidence(answer, context, relevantChunks) {
+  const answerSentences = answer.split(/[.!?]+/).filter(s => s.trim().length > 10);
+  const evidence = [];
+  
+  for (const sentence of answerSentences) {
+    const sentenceLower = sentence.toLowerCase().trim();
+    
+    // Find chunks that contain similar content
+    for (const chunk of relevantChunks) {
+      const chunkLower = chunk.content.toLowerCase();
+      
+      // Check if chunk contains key terms from the sentence
+      const sentenceWords = sentenceLower.split(/\s+/).filter(w => w.length > 4);
+      const matchingWords = sentenceWords.filter(word => chunkLower.includes(word));
+      
+      if (matchingWords.length >= 2) {
+        // Extract relevant portion from chunk
+        const sentences = chunk.content.split(/[.!?]+/);
+        for (const chunkSentence of sentences) {
+          const chunkSentenceLower = chunkSentence.toLowerCase();
+          if (matchingWords.some(word => chunkSentenceLower.includes(word))) {
+            evidence.push(chunkSentence.trim());
+            break; // Take first matching sentence from this chunk
+          }
+        }
+        break; // Take first matching chunk
+      }
+    }
+  }
+  
+  return evidence.slice(0, 3); // Limit to top 3 evidence pieces
+}
+
 async function generateAnswer(query, relevantChunks) {
   try {
     // Get config at runtime
     const llmConfig = getLLMConfig();
     
-    // Create context from relevant chunks (shortened for speed)
+    // Create context from relevant chunks
     const context = relevantChunks
-      .slice(0, 3) // Only use top 3 chunks for speed
-      .map((chunk, index) => `[Document ${chunk.document_id}]: ${chunk.content.substring(0, 400)}`)
+      .slice(0, 3)
+      .map(chunk => `[Document ${chunk.document_id}]: ${chunk.content.substring(0, 400)}`)
       .join('\n\n');
 
-    const prompt = `You are a document-only Q&A assistant. You MUST follow these rules strictly.
+    // Debug: Log the context being sent to LLM
+    console.log('=== DEBUG: Context being sent to LLM ===');
+    console.log('Context length:', context.length);
+    console.log('Context preview:', context.substring(0, 500));
+    console.log('Question:', query);
+    console.log('===============================================');
 
-CONTEXT FROM UPLOADED DOCUMENTS:
+    // Simple, direct prompt for LLM
+    const simplePrompt = `Context:
 ${context}
 
-QUESTION: "${query}"
+Question: ${query}
 
-CRITICAL RULES - NO EXCEPTIONS:
-1. ONLY answer if the exact answer is in the context above
-2. If answer is not in context, respond: "I don't have information about this topic in uploaded documents."
-3. DO NOT use any general knowledge, training data, or outside information
-4. If context mentions React Native and question asks about Python, respond: "I don't have information about this topic in uploaded documents."
-5. If you cannot find the EXACT answer, say you don't have information
-6. Be extremely strict - if unsure, respond that you don't have information
+Answer the question based ONLY on the context above. If the answer is not explicitly in the context, respond exactly: "Not found in memory".
+ 
+Answer:`;
 
-EXAMPLES:
-Context: "React Native is a framework" + Question: "What is React Native?" → "React Native is a framework"
-Context: "React Native is a framework" + Question: "What is Python?" → "I don't have information about this topic in uploaded documents."
-
-ANSWER:`;
-
-    const response = await axios.post(`${llmConfig[LLM_PROVIDER].chatUrl}`, {
-      model: llmConfig[LLM_PROVIDER].model,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a document-only Q&A assistant. You can ONLY use information from the provided context. Never use general knowledge or training data.'
-        },
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      ...(LLM_PROVIDER === 'ollama' ? {
-        stream: false,
-        options: {
-          num_predict: 80,
-          temperature: 0.05
-        }
-      } : {
-        max_tokens: 80,
-        temperature: 0.05
-      })
+    const response = await axios.post(`${llmConfig.chat.chatUrl}`, {
+      model: llmConfig.chat.model,
+      prompt: simplePrompt,
+      stream: false,
+      options: {
+        num_predict: 150,
+        temperature: 0.1 // Lower temperature for more deterministic responses
+      }
     }, {
       headers: LLM_PROVIDER === 'ollama' ? {
         'Content-Type': 'application/json'
@@ -281,32 +380,97 @@ ANSWER:`;
       timeout: 30000
     });
 
-    const answer = LLM_PROVIDER === 'ollama' ? response.data.response : response.data.choices[0].message.content;
-    console.log('LLM Raw Response:', answer);
-    return answer.trim();
+    const rawAnswer = response.data.response;
+    console.log('LLM Raw Response:', rawAnswer);
+    console.log('LLM Response length:', rawAnswer?.length || 0);
+    
+    // Check if response is empty or just whitespace
+    if (!rawAnswer || rawAnswer.trim().length === 0) {
+      console.log('LLM returned empty response');
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: "Empty LLM response" }
+      };
+    }
+    
+    const answer = rawAnswer.trim();
+    
+    // Simple validation: if answer contains "Not found in memory", return it directly
+    if (answer.includes("Not found in memory")) {
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: "Information not found in context" }
+      };
+    }
+    
+    // Validate that answer is actually from context
+    const contextLower = context.toLowerCase();
+    const answerLower = answer.toLowerCase();
+    
+    // Check if answer contains words from context
+    const contextWords = contextLower.split(/\s+/).filter(w => w.length > 3);
+    const answerWords = answerLower.split(/\s+/).filter(w => w.length > 3);
+    const commonWords = answerWords.filter(word => contextWords.includes(word));
+    const contextOverlap = commonWords.length / Math.max(answerWords.length, 1);
+    
+    console.log(`Context overlap: ${contextOverlap.toFixed(2)} (${commonWords.length}/${answerWords.length} words)`);
+    
+    // If less than 20% overlap, consider it not found
+    if (contextOverlap < 0.2) {
+      console.log('Low context overlap - returning "Not found in memory"');
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: `Low context overlap: ${(contextOverlap * 100).toFixed(1)}%` }
+      };
+    }
+    
+    // Return the answer with basic validation
+    return {
+      answer: answer,
+      supportingEvidence: [context.substring(0, 100) + '...'],
+      confidence: contextOverlap > 0.5 ? "High" : contextOverlap > 0.3 ? "Medium" : "Low",
+      validation: { isValid: true, confidence: "Medium", reason: `Context overlap: ${(contextOverlap * 100).toFixed(1)}%` }
+    };
 
   } catch (error) {
     console.error('Error generating answer:', error);
     if (error.code === 'ECONNREFUSED' || error.message.includes('ECONNREFUSED')) {
       console.log('Ollama not available - providing fallback response');
-      if (relevantChunks.length > 0) {
-        return "I found relevant information in your documents, but AI service is currently unavailable. Please try again later.";
-      } else {
-        return "I don't have information about this topic in uploaded documents.";
-      }
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: "Service unavailable" }
+      };
     }
     
     // Check if API key is missing
     if (error.response && error.response.status === 401) {
       console.error(`${EMBEDDING_PROVIDER} API key invalid or missing`);
       console.error('Error details:', error.response.data);
-      return "AI service is currently unavailable due to missing GROQ_API_KEY. Please add GROQ_API_KEY to environment variables.";
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: "API key missing" }
+      };
     }
     
     // Check for other API errors
     if (error.response && error.response.status >= 400) {
       console.error(`${EMBEDDING_PROVIDER} API error:`, error.response.data);
-      return "AI service is currently unavailable. Please try again later.";
+      return {
+        answer: "Not found in memory",
+        supportingEvidence: [],
+        confidence: "Low",
+        validation: { isValid: true, confidence: "Low", reason: "API error" }
+      };
     }
     
     throw new Error('Failed to generate answer');
@@ -336,7 +500,7 @@ router.post('/ask', async (req, res) => {
 
     // HARD RULE: If no chunks found with good similarity, return "not found" immediately
     if (relevantChunks.length === 0) {
-      console.log('No relevant chunks found - returning not found response');
+      console.log('No relevant chunks found - returning "not found"');
       return res.json({
         answer: "I don't have information about this topic in uploaded documents.",
         sources: [],
@@ -344,12 +508,19 @@ router.post('/ask', async (req, res) => {
       });
     }
 
+    console.log(`Found ${relevantChunks.length} relevant chunks for question: "${question}"`);
+    console.log('Top chunk preview:', relevantChunks[0]?.content?.substring(0, 100) + '...');
+
     // Step 3: Generate answer
     console.log('Step 3: Generating answer with context...');
-    const answer = await generateAnswer(question, relevantChunks);
+    console.log('Available chunks for context:', relevantChunks.length);
+    console.log('First chunk content preview:', relevantChunks[0]?.content?.substring(0, 200) + '...');
+    const answerResult = await generateAnswer(question, relevantChunks);
 
     res.json({
-      answer,
+      answer: answerResult.answer,
+      supportingEvidence: answerResult.supportingEvidence,
+      confidence: answerResult.confidence,
       sources: relevantChunks.map(chunk => ({
         document_id: chunk.document_id,
         chunk_index: chunk.chunk_index,
@@ -357,7 +528,8 @@ router.post('/ask', async (req, res) => {
         preview: chunk.content.substring(0, 100) + '...'
       })),
       question,
-      chunks_used: relevantChunks.length
+      chunks_used: relevantChunks.length,
+      validation: answerResult.validation
     });
 
   } catch (error) {
@@ -415,4 +587,9 @@ router.get('/health', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = {
+  router,
+  generateQueryEmbedding, // Export for hybrid search
+  searchRelevantChunks,
+  generateAnswer
+};

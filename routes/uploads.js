@@ -295,6 +295,33 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     }
 
     console.log(`Created document record with ID: ${documentRecord.id}`);
+    
+    // Step 4: Store structured knowledge in separate table
+    if (structuredKnowledge && structuredKnowledge.summary) {
+      try {
+        const { data: knowledgeRecord, error: knowledgeError } = await supabase
+          .from('document_knowledge')
+          .insert({
+            document_id: documentRecord.id,
+            user_id: user_id,
+            summary: structuredKnowledge.summary || 'Document analysis',
+            decisions: structuredKnowledge.decisions || [],
+            concepts: structuredKnowledge.concepts || [],
+            relationships: structuredKnowledge.relationships || [],
+            extracted_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+
+        if (knowledgeError) {
+          console.error('Error storing structured knowledge:', knowledgeError);
+        } else {
+          console.log(`✅ Successfully extracted and stored structured knowledge for document ${documentRecord.id}`);
+        }
+      } catch (error) {
+        console.error('Error in knowledge storage:', error);
+      }
+    }
 
     // Step 5: Process each chunk and store with proper document_id
     const processedChunks = [];

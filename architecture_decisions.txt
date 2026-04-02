@@ -1,0 +1,17 @@
+Architecture Decision: Authentication System
+
+After much consideration, we decided to implement JWT (JSON Web Tokens) for authentication instead of traditional session-based authentication.
+
+The primary reason for choosing JWT was scalability. Session-based authentication requires server-side storage and creates stateful connections, which doesn't work well with microservices architecture. JWT tokens are self-contained and can be verified without database lookups.
+
+The impact of this decision is that our authentication system is now stateless. This means we can easily scale our application horizontally and add new services without worrying about session synchronization. Each service can independently verify tokens.
+
+However, this decision introduces some complexity around token revocation. Since JWT tokens cannot be easily revoked before expiration, we had to implement a token blacklist system for emergency revocation scenarios. This adds some overhead but gives us the ability to invalidate tokens when needed.
+
+Another key decision was to use refresh tokens instead of long-lived access tokens. Access tokens expire after 15 minutes while refresh tokens last 7 days. This reduces the attack surface and limits the damage from token theft.
+
+The refresh token rotation strategy was implemented to prevent token fixation attacks. Every time a refresh token is used, a new one is issued and the old one is invalidated.
+
+We also decided to store token metadata in Redis for fast lookup and to implement rate limiting. This gives us visibility into active sessions and helps prevent abuse.
+
+Overall, the JWT-based authentication system provides better scalability and performance for our distributed architecture, though it required additional complexity for proper security implementation.

@@ -10,6 +10,8 @@ const userRoutes = require('./routes/users');
 const uploadRoutes = require('./routes/uploads');
 const askRoutes = require('./routes/ask');
 const managementRoutes = require('./routes/management');
+const knowledgeRoutes = require('./routes/knowledge');
+const testKnowledgeRoutes = require('./test_knowledge');
 
 const app = express();
 
@@ -41,8 +43,10 @@ app.get('/health', (req, res) => {
 app.use('/api/memories', memoryRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/uploads', uploadRoutes);
-app.use('/api/ask', askRoutes);
+app.use('/api/ask', askRoutes.router);
 app.use('/api/management', managementRoutes);
+app.use('/api/knowledge', knowledgeRoutes.router);
+app.use('/api/test', testKnowledgeRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -53,19 +57,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Memory AI Backend server running on port ${PORT}`);
+  console.log(`📊 Health check available at http://localhost:${PORT}/health`);
 });
-
-// For Vercel serverless deployment
-module.exports = app;
-
-// For local development
-if (require.main === module) {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Memory AI Backend server running on port ${PORT}`);
-    console.log(`📊 Health check available at http://localhost:${PORT}/health`);
-  });
-}
